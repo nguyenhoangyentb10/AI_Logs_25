@@ -31,36 +31,67 @@ def flush() -> None:
         logger.info("✅ LangFuse buffer flushed")
 
 
-def start_trace(trace_id: str, session_id: str, user_message: str, model: str):
+def start_trace(
+    trace_id: str,
+    session_id: str,
+    user_message: str,
+    model: str,
+    tenant_id: str | None = None,
+    user_id: str | None = None,
+    business_action_id: str | None = None,
+):
     """Tạo trace bao quanh toàn bộ request."""
     return get_client().trace(
         id=trace_id,
         name="user-chat",
         session_id=session_id,
         input=user_message,
-        metadata={"model": model, "env": settings.app_env},
+        user_id=str(user_id) if user_id else None,
+        metadata={
+            "model":              model,
+            "env":                settings.app_env,
+            "tenant_id":          tenant_id,
+            "business_action_id": business_action_id,
+        },
         tags=[settings.app_env, "groq", "litellm"],
     )
 
 
-def end_trace_ok(trace, output: str, total_tokens: int, latency_ms: int) -> None:
-    trace.update(
-        output=output,
-        metadata={"total_tokens": total_tokens, "latency_ms": latency_ms},
-    )
+def end_trace_ok(
+    trace,
+    output: str,
+    total_tokens: int,
+    latency_ms: int,
+    extra_metadata: dict | None = None,
+) -> None:
+    meta = {"total_tokens": total_tokens, "latency_ms": latency_ms}
+    if extra_metadata:
+        meta.update(extra_metadata)
+    trace.update(output=output, metadata=meta)
 
 
 def end_trace_error(trace, error: str) -> None:
     trace.update(level="ERROR", status_message=error, output={"error": error})
 
 
-def create_flow_trace(flow_id: str, session_id: str, input_text: str):
-    """Tạo parent trace bao toàn bộ luồng (answer + generate_question)."""
+def create_flow_trace(
+    flow_id: str,
+    session_id: str,
+    input_text: str,
+    tenant_id: str | None = None,
+    user_id: str | None = None,
+):
+    """Tạo parent trace bao toàn bộ luồng (answer + generate_question + analyze_feedback)."""
     return get_client().trace(
         id=flow_id,
         name="user-flow",
         session_id=session_id,
         input=input_text,
+        user_id=str(user_id) if user_id else None,
+        metadata={
+            "tenant_id":          tenant_id,
+            "business_action_id": flow_id,
+        },
         tags=[settings.app_env, "flow"],
     )
 

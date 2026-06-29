@@ -141,7 +141,9 @@ async def interactive_chat() -> None:
 
         try:
             flow_id    = str(uuid4())
-            flow_trace = create_flow_trace(flow_id, session_id, user_input)
+            # tenant_id / user_id: null trong CLI; truyền từ JWT khi tích hợp app thật
+            flow_trace = create_flow_trace(flow_id, session_id, user_input,
+                                           tenant_id=None, user_id=None)
 
             result = await groq_chat.chat(
                 user_message=user_input,

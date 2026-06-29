@@ -142,6 +142,9 @@ async def chat(
                 session_id=session_id,
                 user_message=user_message,
                 model=model,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                business_action_id=business_action_id,
             )
             span = trace.span(name="build-context")
             span.end(output={"message_count": len(messages)})
@@ -160,6 +163,16 @@ async def chat(
                     "trace_name": "user-chat",
                     "session_id": session_id,
                     "tags": [settings.app_env, "groq"],
+                    "metadata": {
+                        "business_action_id": business_action_id,
+                        "tenant_id":          tenant_id,
+                        "user_id":            user_id,
+                        "provider":           provider,
+                        "model_version":      model_version,
+                        "attempt_number":     attempt,
+                        "is_retry":           is_retry,
+                        "is_fallback":        False,
+                    },
                 },
             )
 
@@ -189,6 +202,14 @@ async def chat(
                 langfuse_service.end_trace_ok(
                     trace=trace, output=content,
                     total_tokens=usage.total_tokens, latency_ms=latency_ms,
+                    extra_metadata={
+                        "cache_status":        _cache_status(provider_key, cached_tokens),
+                        "cached_input_tokens": cached_tokens,
+                        "reasoning_tokens":    reasoning_tokens,
+                        "raw_provider_cost":   cost,
+                        "attempt_number":      attempt,
+                        "is_retry":            is_retry,
+                    },
                 )
             await record_request(
                 model=model,
@@ -376,6 +397,9 @@ async def generate_question(
                 session_id=session_id,
                 user_message=context[:200],
                 model=model,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                business_action_id=business_action_id,
             )
 
         try:
@@ -388,6 +412,16 @@ async def generate_question(
                     "trace_name": "generate-question",
                     "session_id": session_id,
                     "tags": [settings.app_env, "groq", "quiz"],
+                    "metadata": {
+                        "business_action_id": business_action_id,
+                        "tenant_id":          tenant_id,
+                        "user_id":            user_id,
+                        "provider":           provider,
+                        "model_version":      model_version,
+                        "attempt_number":     attempt,
+                        "is_retry":           is_retry,
+                        "is_fallback":        False,
+                    },
                 },
             )
 
@@ -406,6 +440,14 @@ async def generate_question(
                 langfuse_service.end_trace_ok(
                     trace=trace, output=content,
                     total_tokens=usage.total_tokens, latency_ms=latency_ms,
+                    extra_metadata={
+                        "cache_status":        _cache_status(provider_key, cached_tokens),
+                        "cached_input_tokens": cached_tokens,
+                        "reasoning_tokens":    reasoning_tokens,
+                        "raw_provider_cost":   cost,
+                        "attempt_number":      attempt,
+                        "is_retry":            is_retry,
+                    },
                 )
             await record_request(
                 model=model, prompt_tokens=usage.prompt_tokens,
@@ -573,6 +615,9 @@ async def analyze_feedback(
                 session_id=session_id,
                 user_message=feedback,
                 model=model,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                business_action_id=business_action_id,
             )
 
         try:
@@ -585,6 +630,16 @@ async def analyze_feedback(
                     "trace_name": "analyze-feedback",
                     "session_id": session_id,
                     "tags": [settings.app_env, "groq", "feedback"],
+                    "metadata": {
+                        "business_action_id": business_action_id,
+                        "tenant_id":          tenant_id,
+                        "user_id":            user_id,
+                        "provider":           provider,
+                        "model_version":      model_version,
+                        "attempt_number":     attempt,
+                        "is_retry":           is_retry,
+                        "is_fallback":        False,
+                    },
                 },
             )
 
@@ -602,6 +657,14 @@ async def analyze_feedback(
                 langfuse_service.end_trace_ok(
                     trace=trace, output=content,
                     total_tokens=usage.total_tokens, latency_ms=latency_ms,
+                    extra_metadata={
+                        "cache_status":        _cache_status(provider_key, cached_tokens),
+                        "cached_input_tokens": cached_tokens,
+                        "reasoning_tokens":    reasoning_tokens,
+                        "raw_provider_cost":   cost,
+                        "attempt_number":      attempt,
+                        "is_retry":            is_retry,
+                    },
                 )
             await record_request(
                 model=model, prompt_tokens=usage.prompt_tokens,
