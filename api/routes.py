@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, status
 
 import groq_chat
 import metrics as metrics_module
-from model import ChatRequest, ChatResponse, HealthResponse, TokenUsage
+from model import ChatRequest, ChatResponse, HealthResponse, TokenUsage, QuestionRequest, QuestionResponse, QuestionData, QuestionOptions
 from core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -59,4 +59,40 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
     except Exception as e:
         logger.error(f"Chat route error: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+@router.post(
+    "/generate-question",
+    response_model=QuestionResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["Quiz"],
+    summary="Sinh câu hỏi trắc nghiệm từ nội dung LLM vừa trả lời",
+)
+async def generate_question(request: QuestionRequest):
+    try:
+        result = await groq_chat.generate_question(
+            context=request.context,
+            session_id=request.session_id,
+            business_action_id=request.business_action_id,
+            tenant_id=request.tenant_id,
+            user_id=request.user_id,
+        )
+        qd = result["question_data"]
+        return QuestionResponse(
+            question_data=QuestionData(
+                question=qd["question"],
+                options=QuestionOptions(**qd["options"]),
+                correct=qd["correct"],
+            ),
+            trace_id=result["trace_id"],
+            session_id=result["session_id"],
+            model=result["model"],
+            usage=TokenUsage(**result["usage"]),
+            latency_ms=result["latency_ms"],
+        )
+    except EnvironmentError as e:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+    except Exception as e:
+        logger.error(f"Generate question error: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))

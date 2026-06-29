@@ -14,6 +14,45 @@ from model import Message
 from services.langfuse_service import flush as langfuse_flush
 from core.config import settings
 
+async def _maybe_generate_question(answer: str, session_id: str) -> None:
+    try:
+        choice = input(f"\n{Y}Bạn có muốn sinh câu hỏi trắc nghiệm từ câu trả lời này không? (có/không): {E}").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return
+
+    if choice not in ("có", "co", "c", "yes", "y"):
+        return
+
+    print(f"{C}Đang sinh câu hỏi...{E}")
+    result = await groq_chat.generate_question(context=answer, session_id=session_id)
+    qd = result["question_data"]
+
+    print(f"\n{B}📝 Câu hỏi:{E}")
+    print(f"   {qd['question']}\n")
+    for key, val in qd["options"].items():
+        print(f"   {B}{key}.{E} {val}")
+
+    # User chọn đáp án
+    while True:
+        try:
+            user_ans = input(f"\n{Y}Chọn đáp án của bạn (A/B/C/D): {E}").strip().upper()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if user_ans in ("A", "B", "C", "D"):
+            break
+        print(f"{R}Vui lòng nhập A, B, C hoặc D.{E}")
+
+    correct = qd["correct"].upper()
+    if user_ans == correct:
+        print(f"\n{G}{B}✅ Chính xác! Đáp án đúng là {correct}.{E}")
+    else:
+        print(f"\n{R}{B}❌ Sai rồi! Bạn chọn {user_ans}, đáp án đúng là {correct}.{E}")
+
+    if qd.get("explanation"):
+        print(f"\n{C}💡 Giải thích: {qd['explanation']}{E}")
+
+    print(f"{Y}⏱  {result['latency_ms']} ms | tokens: {result['usage']['total_tokens']}{E}\n")
+
 G = "\033[92m"; Y = "\033[93m"; C = "\033[96m"; B = "\033[1m"; R = "\033[91m"; E = "\033[0m"
 
 
@@ -62,6 +101,9 @@ async def interactive_chat() -> None:
                 history=history,
             )
             _print_result(result)
+
+            # Hỏi user có muốn sinh câu hỏi trắc nghiệm không
+            await _maybe_generate_question(result["response"], session_id)
 
             # Lưu history cho lượt tiếp theo
             history.append(Message(role="user",      content=user_input))

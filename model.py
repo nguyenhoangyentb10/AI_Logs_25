@@ -77,3 +77,45 @@ class HealthResponse(BaseModel):
     model: str
     langfuse_host: str
     env: str
+
+
+class QuestionRequest(BaseModel):
+    context: str = Field(..., description="Nội dung LLM vừa trả lời, dùng làm tài liệu sinh câu hỏi")
+    session_id: Optional[str] = None
+    business_action_id: Optional[str] = None
+    tenant_id: Optional[str] = None
+    user_id: Optional[str] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "context": "Machine learning là một lĩnh vực của AI...",
+                "session_id": "session-001",
+                "tenant_id": "tenant_fci",
+                "user_id": "user_123",
+            }
+        }
+    }
+
+
+class QuestionOptions(BaseModel):
+    A: str
+    B: str
+    C: str
+    D: str
+
+
+class QuestionData(BaseModel):
+    question: str
+    options: QuestionOptions
+    correct: str = Field(..., description="Đáp án đúng: A, B, C hoặc D")
+    explanation: str = Field(default="", description="Giải thích tại sao đáp án đúng")
+
+
+class QuestionResponse(BaseModel):
+    question_data: QuestionData
+    trace_id: str
+    session_id: str
+    model: str
+    usage: TokenUsage
+    latency_ms: int
