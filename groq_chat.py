@@ -119,6 +119,7 @@ async def chat(
     workflow_step: str | None = None,
     tenant_id: str | None = None,
     user_id: str | None = None,
+    parent_trace_id: str | None = None,
 ) -> dict:
     model      = model or settings.default_model
     session_id = session_id or str(uuid4())
@@ -131,17 +132,19 @@ async def chat(
 
     for attempt in range(1, settings.max_retries + 1):
         is_retry  = attempt > 1
-        trace_id  = str(uuid4())          # ai_request_id mới cho mỗi attempt
+        trace_id  = str(uuid4())
         started_at = datetime.now(timezone.utc)
 
-        trace = langfuse_service.start_trace(
-            trace_id=trace_id,
-            session_id=session_id,
-            user_message=user_message,
-            model=model,
-        )
-        span = trace.span(name="build-context")
-        span.end(output={"message_count": len(messages)})
+        # Nếu có parent trace thì dùng lại, không tạo trace riêng
+        if parent_trace_id is None:
+            trace = langfuse_service.start_trace(
+                trace_id=trace_id,
+                session_id=session_id,
+                user_message=user_message,
+                model=model,
+            )
+            span = trace.span(name="build-context")
+            span.end(output={"message_count": len(messages)})
 
         try:
             logger.info(
@@ -152,8 +155,8 @@ async def chat(
                 model=model,
                 messages=messages,
                 metadata={
-                    "generation_name": "groq-completion",
-                    "trace_id":   trace_id,
+                    "generation_name": workflow_step or "groq-completion",
+                    "trace_id":   parent_trace_id or trace_id,
                     "trace_name": "user-chat",
                     "session_id": session_id,
                     "tags": [settings.app_env, "groq"],
@@ -182,10 +185,11 @@ async def chat(
                 "total_tokens":      usage.total_tokens,
             }
 
-            langfuse_service.end_trace_ok(
-                trace=trace, output=content,
-                total_tokens=usage.total_tokens, latency_ms=latency_ms,
-            )
+            if parent_trace_id is None:
+                langfuse_service.end_trace_ok(
+                    trace=trace, output=content,
+                    total_tokens=usage.total_tokens, latency_ms=latency_ms,
+                )
             await record_request(
                 model=model,
                 prompt_tokens=usage.prompt_tokens,
@@ -235,7 +239,8 @@ async def chat(
             last_exc   = exc
             logger.warning(f"[{trace_id[:8]}] ✗ attempt={attempt} retryable: {exc}")
 
-            langfuse_service.end_trace_error(trace=trace, error=str(exc))
+            if parent_trace_id is None:
+                langfuse_service.end_trace_error(trace=trace, error=str(exc))
             await record_request(model=model, prompt_tokens=0, completion_tokens=0,
                                  latency_ms=latency_ms, success=False)
             await log_call(
@@ -275,7 +280,8 @@ async def chat(
             latency_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
             logger.error(f"[{trace_id[:8]}] ✗ attempt={attempt} non-retryable: {exc}")
 
-            langfuse_service.end_trace_error(trace=trace, error=str(exc))
+            if parent_trace_id is None:
+                langfuse_service.end_trace_error(trace=trace, error=str(exc))
             await record_request(model=model, prompt_tokens=0, completion_tokens=0,
                                  latency_ms=latency_ms, success=False)
             await log_call(
@@ -343,6 +349,7 @@ async def generate_question(
     tenant_id: str | None = None,
     user_id: str | None = None,
     model: str | None = None,
+    parent_trace_id: str | None = None,
 ) -> dict:
     import json as _json
 
@@ -363,20 +370,21 @@ async def generate_question(
         trace_id   = str(uuid4())
         started_at = datetime.now(timezone.utc)
 
-        trace = langfuse_service.start_trace(
-            trace_id=trace_id,
-            session_id=session_id,
-            user_message=context[:200],
-            model=model,
-        )
+        if parent_trace_id is None:
+            trace = langfuse_service.start_trace(
+                trace_id=trace_id,
+                session_id=session_id,
+                user_message=context[:200],
+                model=model,
+            )
 
         try:
             response = await litellm.acompletion(
                 model=model,
                 messages=messages,
                 metadata={
-                    "generation_name": "generate-question",
-                    "trace_id":   trace_id,
+                    "generation_name": workflow_step,
+                    "trace_id":   parent_trace_id or trace_id,
                     "trace_name": "generate-question",
                     "session_id": session_id,
                     "tags": [settings.app_env, "groq", "quiz"],
@@ -394,10 +402,11 @@ async def generate_question(
             except Exception:
                 cost = 0.0
 
-            langfuse_service.end_trace_ok(
-                trace=trace, output=content,
-                total_tokens=usage.total_tokens, latency_ms=latency_ms,
-            )
+            if parent_trace_id is None:
+                langfuse_service.end_trace_ok(
+                    trace=trace, output=content,
+                    total_tokens=usage.total_tokens, latency_ms=latency_ms,
+                )
             await record_request(
                 model=model, prompt_tokens=usage.prompt_tokens,
                 completion_tokens=usage.completion_tokens,
@@ -455,7 +464,8 @@ async def generate_question(
         except _RETRYABLE as exc:
             latency_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
             last_exc   = exc
-            langfuse_service.end_trace_error(trace=trace, error=str(exc))
+            if parent_trace_id is None:
+                langfuse_service.end_trace_error(trace=trace, error=str(exc))
             await record_request(model=model, prompt_tokens=0, completion_tokens=0,
                                  latency_ms=latency_ms, success=False)
             await log_call(
@@ -487,7 +497,8 @@ async def generate_question(
 
         except Exception as exc:
             latency_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
-            langfuse_service.end_trace_error(trace=trace, error=str(exc))
+            if parent_trace_id is None:
+                langfuse_service.end_trace_error(trace=trace, error=str(exc))
             await record_request(model=model, prompt_tokens=0, completion_tokens=0,
                                  latency_ms=latency_ms, success=False)
             await log_call(

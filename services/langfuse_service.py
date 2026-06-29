@@ -52,3 +52,20 @@ def end_trace_ok(trace, output: str, total_tokens: int, latency_ms: int) -> None
 
 def end_trace_error(trace, error: str) -> None:
     trace.update(level="ERROR", status_message=error, output={"error": error})
+
+
+def create_flow_trace(flow_id: str, session_id: str, input_text: str):
+    """Tạo parent trace bao toàn bộ luồng (answer + generate_question)."""
+    return get_client().trace(
+        id=flow_id,
+        name="user-flow",
+        session_id=session_id,
+        input=input_text,
+        tags=[settings.app_env, "flow"],
+    )
+
+
+def end_flow_trace(trace, output: str) -> None:
+    """Đóng parent trace sau khi luồng hoàn tất."""
+    trace.update(output=output)
+    get_client().flush()

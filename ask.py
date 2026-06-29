@@ -8,23 +8,31 @@ Dùng:
 """
 import asyncio
 import argparse
+from uuid import uuid4
 
 import groq_chat
 from model import Message
-from services.langfuse_service import flush as langfuse_flush
+from services.langfuse_service import flush as langfuse_flush, create_flow_trace, end_flow_trace
 from core.config import settings
 
-async def _maybe_generate_question(answer: str, session_id: str) -> None:
+async def _maybe_generate_question(answer: str, session_id: str, flow_id: str, flow_trace) -> None:
     try:
         choice = input(f"\n{Y}Bạn có muốn sinh câu hỏi trắc nghiệm từ câu trả lời này không? (có/không): {E}").strip().lower()
     except (EOFError, KeyboardInterrupt):
         return
 
     if choice not in ("có", "co", "c", "yes", "y"):
+        end_flow_trace(flow_trace, answer)
+        print(f"{Y}🔍 flow: {settings.langfuse_host}/trace/{flow_id}{E}\n")
         return
 
     print(f"{C}Đang sinh câu hỏi...{E}")
-    result = await groq_chat.generate_question(context=answer, session_id=session_id)
+    result = await groq_chat.generate_question(
+        context=answer,
+        session_id=session_id,
+        business_action_id=flow_id,
+        parent_trace_id=flow_id,
+    )
     qd = result["question_data"]
 
     print(f"\n{B}📝 Câu hỏi:{E}")
@@ -51,7 +59,9 @@ async def _maybe_generate_question(answer: str, session_id: str) -> None:
     if qd.get("explanation"):
         print(f"\n{C}💡 Giải thích: {qd['explanation']}{E}")
 
-    print(f"{Y}⏱  {result['latency_ms']} ms | tokens: {result['usage']['total_tokens']}{E}\n")
+    print(f"{Y}⏱  {result['latency_ms']} ms | tokens: {result['usage']['total_tokens']}{E}")
+    end_flow_trace(flow_trace, answer)
+    print(f"{Y}🔍 flow: {settings.langfuse_host}/trace/{flow_id}{E}\n")
 
 G = "\033[92m"; Y = "\033[93m"; C = "\033[96m"; B = "\033[1m"; R = "\033[91m"; E = "\033[0m"
 
@@ -95,15 +105,21 @@ async def interactive_chat() -> None:
             continue
 
         try:
+            flow_id    = str(uuid4())
+            flow_trace = create_flow_trace(flow_id, session_id, user_input)
+
             result = await groq_chat.chat(
                 user_message=user_input,
                 session_id=session_id,
                 history=history,
+                business_action_id=flow_id,
+                workflow_step="answer",
+                parent_trace_id=flow_id,
             )
             _print_result(result)
 
             # Hỏi user có muốn sinh câu hỏi trắc nghiệm không
-            await _maybe_generate_question(result["response"], session_id)
+            await _maybe_generate_question(result["response"], session_id, flow_id, flow_trace)
 
             # Lưu history cho lượt tiếp theo
             history.append(Message(role="user",      content=user_input))
