@@ -119,3 +119,37 @@ class QuestionResponse(BaseModel):
     model: str
     usage: TokenUsage
     latency_ms: int
+
+
+class FeedbackRequest(BaseModel):
+    feedback: str = Field(..., description="Nội dung feedback của user")
+    session_id: Optional[str] = None
+    business_action_id: Optional[str] = None
+    tenant_id: Optional[str] = None
+    user_id: Optional[str] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "feedback": "Câu trả lời rất chi tiết và dễ hiểu, tôi rất hài lòng!",
+                "session_id": "session-001",
+                "tenant_id": "tenant_fci",
+                "user_id": "user_123",
+            }
+        }
+    }
+
+
+class FeedbackData(BaseModel):
+    sentiment: str = Field(..., description="positive | negative | neutral")
+    score: float   = Field(..., description="Độ tin cậy từ 0.0 đến 1.0")
+    summary: str   = Field(..., description="Tóm tắt ngắn gọn nội dung feedback")
+
+
+class FeedbackResponse(BaseModel):
+    feedback_data: FeedbackData
+    trace_id: str
+    session_id: str
+    model: str
+    usage: TokenUsage
+    latency_ms: int

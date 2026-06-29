@@ -22,8 +22,6 @@ async def _maybe_generate_question(answer: str, session_id: str, flow_id: str, f
         return
 
     if choice not in ("có", "co", "c", "yes", "y"):
-        end_flow_trace(flow_trace, answer)
-        print(f"{Y}🔍 flow: {settings.langfuse_host}/trace/{flow_id}{E}\n")
         return
 
     print(f"{C}Đang sinh câu hỏi...{E}")
@@ -60,8 +58,45 @@ async def _maybe_generate_question(answer: str, session_id: str, flow_id: str, f
         print(f"\n{C}💡 Giải thích: {qd['explanation']}{E}")
 
     print(f"{Y}⏱  {result['latency_ms']} ms | tokens: {result['usage']['total_tokens']}{E}")
-    end_flow_trace(flow_trace, answer)
-    print(f"{Y}🔍 flow: {settings.langfuse_host}/trace/{flow_id}{E}\n")
+
+async def _ask_feedback(session_id: str, flow_id: str) -> None:
+    try:
+        choice = input(f"\n{Y}Bạn có muốn để lại feedback không? (có/không): {E}").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return
+
+    if choice not in ("có", "co", "c", "yes", "y"):
+        return
+
+    try:
+        feedback_text = input(f"{Y}Nhập feedback của bạn: {E}").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+
+    if not feedback_text:
+        return
+
+    print(f"{C}Đang phân tích feedback...{E}")
+    result = await groq_chat.analyze_feedback(
+        feedback=feedback_text,
+        session_id=session_id,
+        business_action_id=flow_id,
+        parent_trace_id=flow_id,
+    )
+    fd = result["feedback_data"]
+
+    SENTIMENT_LABEL = {
+        "positive": f"{G}TÍCH CỰC 😊{E}",
+        "negative": f"{R}TIÊU CỰC 😞{E}",
+        "neutral":  f"{Y}TRUNG TÍNH 😐{E}",
+    }
+    label = SENTIMENT_LABEL.get(fd["sentiment"], fd["sentiment"].upper())
+    print(f"\n{B}📊 Kết quả phân tích:{E}")
+    print(f"   Sentiment  : {label}")
+    print(f"   Độ tin cậy : {round(fd['score'] * 100)}%")
+    print(f"   Tóm tắt    : {fd['summary']}")
+    print(f"{Y}⏱  {result['latency_ms']} ms | tokens: {result['usage']['total_tokens']}{E}")
+
 
 G = "\033[92m"; Y = "\033[93m"; C = "\033[96m"; B = "\033[1m"; R = "\033[91m"; E = "\033[0m"
 
@@ -118,8 +153,15 @@ async def interactive_chat() -> None:
             )
             _print_result(result)
 
-            # Hỏi user có muốn sinh câu hỏi trắc nghiệm không
+            # Bước 2: sinh câu hỏi trắc nghiệm
             await _maybe_generate_question(result["response"], session_id, flow_id, flow_trace)
+
+            # Bước 3: feedback
+            await _ask_feedback(session_id, flow_id)
+
+            # Đóng flow trace sau khi hoàn tất toàn bộ luồng
+            end_flow_trace(flow_trace, result["response"])
+            print(f"{Y}🔍 flow: {settings.langfuse_host}/trace/{flow_id}{E}\n")
 
             # Lưu history cho lượt tiếp theo
             history.append(Message(role="user",      content=user_input))

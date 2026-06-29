@@ -6,7 +6,9 @@ from fastapi import APIRouter, HTTPException, status
 
 import groq_chat
 import metrics as metrics_module
-from model import ChatRequest, ChatResponse, HealthResponse, TokenUsage, QuestionRequest, QuestionResponse, QuestionData, QuestionOptions
+from model import (ChatRequest, ChatResponse, HealthResponse, TokenUsage,
+                   QuestionRequest, QuestionResponse, QuestionData, QuestionOptions,
+                   FeedbackRequest, FeedbackResponse, FeedbackData)
 from core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -95,4 +97,40 @@ async def generate_question(request: QuestionRequest):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
     except Exception as e:
         logger.error(f"Generate question error: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+@router.post(
+    "/analyze-feedback",
+    response_model=FeedbackResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["Feedback"],
+    summary="Phân tích feedback của user: tích cực / tiêu cực / trung tính",
+)
+async def analyze_feedback(request: FeedbackRequest):
+    try:
+        result = await groq_chat.analyze_feedback(
+            feedback=request.feedback,
+            session_id=request.session_id,
+            business_action_id=request.business_action_id,
+            tenant_id=request.tenant_id,
+            user_id=request.user_id,
+        )
+        fd = result["feedback_data"]
+        return FeedbackResponse(
+            feedback_data=FeedbackData(
+                sentiment=fd["sentiment"],
+                score=fd["score"],
+                summary=fd["summary"],
+            ),
+            trace_id=result["trace_id"],
+            session_id=result["session_id"],
+            model=result["model"],
+            usage=TokenUsage(**result["usage"]),
+            latency_ms=result["latency_ms"],
+        )
+    except EnvironmentError as e:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+    except Exception as e:
+        logger.error(f"Analyze feedback error: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))

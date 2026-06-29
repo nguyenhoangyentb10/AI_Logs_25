@@ -528,3 +528,178 @@ async def generate_question(
             raise
 
     raise last_exc
+
+
+_FEEDBACK_SYSTEM_PROMPT = (
+    "Bạn là chuyên gia phân tích cảm xúc. "
+    "Phân tích đoạn feedback được cung cấp và xác định cảm xúc (positive, negative, neutral). "
+    "Trả về JSON hợp lệ theo đúng format sau, không thêm bất kỳ text nào khác:\n"
+    '{"sentiment": "positive|negative|neutral", "score": 0.95, "summary": "Tóm tắt ngắn gọn nội dung feedback"}'
+)
+
+
+async def analyze_feedback(
+    feedback: str,
+    session_id: str | None = None,
+    business_action_id: str | None = None,
+    workflow_step: str = "analyze_feedback",
+    tenant_id: str | None = None,
+    user_id: str | None = None,
+    model: str | None = None,
+    parent_trace_id: str | None = None,
+) -> dict:
+    import json as _json
+
+    model      = model or settings.default_model
+    session_id = session_id or str(uuid4())
+    messages   = [
+        {"role": "system", "content": _FEEDBACK_SYSTEM_PROMPT},
+        {"role": "user",   "content": f"Feedback:\n{feedback}"},
+    ]
+
+    provider, model_name, model_version = _parse_model(model)
+    provider_key = model.split("/")[0].lower() if "/" in model else ""
+
+    last_exc: Exception | None = None
+
+    for attempt in range(1, settings.max_retries + 1):
+        is_retry   = attempt > 1
+        trace_id   = str(uuid4())
+        started_at = datetime.now(timezone.utc)
+
+        if parent_trace_id is None:
+            trace = langfuse_service.start_trace(
+                trace_id=trace_id,
+                session_id=session_id,
+                user_message=feedback,
+                model=model,
+            )
+
+        try:
+            response = await litellm.acompletion(
+                model=model,
+                messages=messages,
+                metadata={
+                    "generation_name": workflow_step,
+                    "trace_id":   parent_trace_id or trace_id,
+                    "trace_name": "analyze-feedback",
+                    "session_id": session_id,
+                    "tags": [settings.app_env, "groq", "feedback"],
+                },
+            )
+
+            content    = response.choices[0].message.content
+            usage      = response.usage
+            latency_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
+
+            cached_tokens, reasoning_tokens, embedding_tokens = _extract_token_details(usage)
+            try:
+                cost = litellm.completion_cost(completion_response=response)
+            except Exception:
+                cost = 0.0
+
+            if parent_trace_id is None:
+                langfuse_service.end_trace_ok(
+                    trace=trace, output=content,
+                    total_tokens=usage.total_tokens, latency_ms=latency_ms,
+                )
+            await record_request(
+                model=model, prompt_tokens=usage.prompt_tokens,
+                completion_tokens=usage.completion_tokens,
+                latency_ms=latency_ms, success=True,
+            )
+            await log_call(
+                business_action_id=business_action_id,
+                ai_request_id=trace_id,
+                workflow_step=workflow_step,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                provider=provider,
+                model_name=model_name,
+                model_version=model_version,
+                input_text=feedback,
+                output_text=content,
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                cached_input_tokens=cached_tokens,
+                reasoning_tokens=reasoning_tokens,
+                embedding_tokens=embedding_tokens,
+                total_tokens=usage.total_tokens,
+                raw_provider_cost=cost,
+                currency="USD",
+                provider_pricing_version=_pricing_version(provider),
+                status="success",
+                attempt_number=attempt,
+                is_retry=is_retry,
+                is_fallback=False,
+                cache_status=_cache_status(provider_key, cached_tokens),
+                recorded_at=datetime.now(timezone.utc).isoformat(),
+            )
+
+            raw = content.strip()
+            if raw.startswith("```"):
+                raw = raw.split("```")[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+            feedback_data = _json.loads(raw.strip())
+
+            return {
+                "feedback_data": feedback_data,
+                "trace_id":      trace_id,
+                "session_id":    session_id,
+                "model":         model,
+                "usage": {
+                    "prompt_tokens":     usage.prompt_tokens,
+                    "completion_tokens": usage.completion_tokens,
+                    "total_tokens":      usage.total_tokens,
+                },
+                "latency_ms": latency_ms,
+            }
+
+        except _RETRYABLE as exc:
+            latency_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
+            last_exc   = exc
+            if parent_trace_id is None:
+                langfuse_service.end_trace_error(trace=trace, error=str(exc))
+            await record_request(model=model, prompt_tokens=0, completion_tokens=0,
+                                 latency_ms=latency_ms, success=False)
+            await log_call(
+                business_action_id=business_action_id, ai_request_id=trace_id,
+                workflow_step=workflow_step, tenant_id=tenant_id, user_id=user_id,
+                provider=provider, model_name=model_name, model_version=model_version,
+                input_text=feedback, output_text=None,
+                input_tokens=0, output_tokens=0, cached_input_tokens=0,
+                reasoning_tokens=0, embedding_tokens=0, total_tokens=0,
+                raw_provider_cost=0.0, currency="USD",
+                provider_pricing_version=_pricing_version(provider),
+                status=_classify_status(exc), attempt_number=attempt,
+                is_retry=is_retry, is_fallback=False,
+                cache_status=_cache_status(provider_key, 0),
+                recorded_at=datetime.now(timezone.utc).isoformat(),
+            )
+            if attempt < settings.max_retries:
+                await asyncio.sleep(settings.retry_delay_s * (2 ** (attempt - 1)))
+
+        except Exception as exc:
+            latency_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
+            if parent_trace_id is None:
+                langfuse_service.end_trace_error(trace=trace, error=str(exc))
+            await record_request(model=model, prompt_tokens=0, completion_tokens=0,
+                                 latency_ms=latency_ms, success=False)
+            await log_call(
+                business_action_id=business_action_id, ai_request_id=trace_id,
+                workflow_step=workflow_step, tenant_id=tenant_id, user_id=user_id,
+                provider=provider, model_name=model_name, model_version=model_version,
+                input_text=feedback, output_text=None,
+                input_tokens=0, output_tokens=0, cached_input_tokens=0,
+                reasoning_tokens=0, embedding_tokens=0, total_tokens=0,
+                raw_provider_cost=0.0, currency="USD",
+                provider_pricing_version=_pricing_version(provider),
+                status=_classify_status(exc), attempt_number=attempt,
+                is_retry=is_retry, is_fallback=False,
+                cache_status=_cache_status(provider_key, 0),
+                recorded_at=datetime.now(timezone.utc).isoformat(),
+            )
+            raise
+
+    raise last_exc
